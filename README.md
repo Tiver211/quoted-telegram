@@ -1,156 +1,189 @@
 # Quoted Bot
 
-**Из сообщения — в стикер. Из переписки — в одну цитату.**
+A Telegram bot that renders messages and short conversations as static WebP
+stickers. It supports group commands, forwarded messages in private chats, and
+Guest Chat Mode for quoting a message without adding the bot to the chat.
 
-Telegram-бот на Python для создания статических WebP-стикеров с именами,
-аватарами, текстом и вложениями. Работает по командам в группах, принимает
-пересылки в личке и вызывается через **Guest Chat Mode** без добавления в чат.
+Implemented in Python 3.12+ with aiogram 3, asynchronous SQLAlchemy, Pillow, and
+uv. SQLite and PostgreSQL are supported. The application uses a database-backed
+job queue and runs as a single instance.
 
-Python 3.12+ · aiogram 3 · SQLAlchemy async · SQLite / PostgreSQL · Pillow · uv
+## Features
 
-## Что умеет
+- Quote an individual message with `/q`.
+- Quote consecutive messages with `/q N`.
+- Assemble a selection of messages with `/qadd` and `/qmake`.
+- Process forwarded messages and manually entered text in private chats.
+- Collect multiple private messages with `/collect`.
+- Respond to guest mentions with a quote sticker.
+- Render author names, available avatars, basic formatting, emoji, photos,
+  static stickers, and attachment cards.
+- Handle classic message text, external replies, and Telegram `rich_message` text.
+- Use an optional HTTP CONNECT, SOCKS4, or SOCKS5 proxy for Telegram requests.
 
-- **Одна реплика:** ответьте на сообщение командой `/q`.
-- **Фрагмент диалога:** `/q 3` — выбранная реплика и три следующих сообщения.
-- **Выборочные реплики:** добавляйте сообщения через `/qadd`, создавайте через `/qmake`.
-- **Без добавления в чат:** ответьте на сообщение, отправив `@имябота`.
-- **В личке:** пересылайте сообщения; для нескольких включите `/collect`.
-- **Оформление:** авторы и доступные аватары, базовое форматирование, emoji,
-  фото, статические стикеры и карточки вложений. Поддерживается новый `rich_message`.
+A quote contains up to 10 messages. The renderer adjusts the font size within
+readability limits and rejects content that cannot fit within a sticker.
 
-В одной цитате — до **10 сообщений**. Бот подбирает размер текста и отклоняет
-подборки, которые невозможно разместить разборчиво на стикере.
+## Quick start
 
-## Быстрый старт: Docker Compose
+### Docker Compose
 
-Нужны Docker Engine и Docker Compose v2. Текущий Compose настроен на Linux
-с host networking: локальный прокси доступен по `127.0.0.1`.
+Requirements: Docker Engine and Docker Compose v2. The supplied Compose
+configuration uses host networking and is intended for local Linux deployments.
+
+Create the configuration file:
 
 ```bash
 cp .env.example .env
 ```
 
-Заполните `.env`:
+Set the required values:
 
 ```dotenv
-BOT_TOKEN=токен_из_BotFather
+BOT_TOKEN=your_botfather_token
 STAGING_CHAT_ID=-1001234567890
-# Необязательно:
+# Optional:
 PROXY_URL=socks5://127.0.0.1:1080
 ```
 
-Затем запустите:
+Configure the bot in Telegram as described below, then start the service:
 
 ```bash
 docker compose up -d --build bot
 docker compose logs -f bot
 ```
 
-Compose сам задаёт пути к SQLite и временным файлам внутри контейнера. База
-хранится в томе `bot-data`, поэтому переживает пересоздание контейнера.
+Compose sets the container paths for SQLite and temporary files. The database
+is stored in the `bot-data` named volume and survives container replacement.
 
 ```bash
-docker compose down       # остановить, сохранив БД
-# docker compose down -v  # остановить и удалить том с БД
+docker compose down       # Stop services and retain the database.
+# docker compose down -v  # Also delete the database volume.
 ```
 
-**Один токен — один запущенный экземпляр:** бот использует long polling.
-Перед запуском контейнера остановите локальный процесс с тем же токеном.
-При старте приложение снимает webhook, сохраняя ожидающие обновления.
+Run only one application instance per bot token. Stop any local process using
+the same token before starting the container. The application uses long polling
+and removes an existing webhook at startup without discarding pending updates.
 
-## Настройки Telegram
+### Local Python environment
 
-### Команды в группе
+Requirements: Python 3.12+ and [uv](https://docs.astral.sh/uv/). Noto fonts are
+included in the package.
 
-Добавьте бота в группу. Для получения обычных сообщений и работы `/q N`:
+```bash
+uv sync --frozen
+cp .env.example .env
+# Set BOT_TOKEN and STAGING_CHAT_ID in .env.
+mkdir -p data
+uv run python -m quoted_bot
+```
 
-- назначьте бота администратором; **либо**
-- отключите **Group Privacy** в BotFather (`/setprivacy` → бот → Disable),
-  затем удалите бота из существующей группы и добавьте заново.
+Skip the copy step if `.env` already exists. For local execution, retain the
+relative paths provided in `.env.example`:
 
-Telegram требует повторного добавления для применения изменения privacy mode.
-Историю до подключения бота он не получает.
+```dotenv
+DATABASE_URL=sqlite+aiosqlite:///./data/quoted.db
+DATA_DIR=./data
+```
 
-### Вызов без добавления в чат
+## Telegram configuration
 
-Откройте **Mini App самого [BotFather](https://t.me/BotFather)**, выберите бота
-и перейдите в **Bot Settings → Mode Settings → Guest Chat Mode**. Включите
-переключатель.
+### Group commands
 
-После этого в другом чате:
+Add the bot to the group. To receive ordinary messages and support `/q N`,
+either grant the bot administrator status or disable **Group Privacy** in
+BotFather: `/setprivacy` → select the bot → Disable.
 
-1. Выберите сообщение и нажмите «Ответить».
-2. Напишите `@имябота` и **отправьте сообщение**.
-3. Бот ответит стикером с выбранной репликой.
+After disabling privacy mode, remove the bot from existing groups and add it
+again for the change to take effect. The bot cannot retrieve messages sent
+before it was added.
 
-Это **Guest Chat Mode**, а не Inline Mode с панелью результатов. Классический
-inline-режим не реализован и для этого сценария не требуется. Гостевой вызов
-цитирует одну реплику и не даёт боту доступ к истории чата.
+### Guest Chat Mode
 
-[О Guest Mode в документации Telegram](https://core.telegram.org/bots/features#guest-bots)
+Open the Mini App belonging to [BotFather](https://t.me/BotFather), select the
+bot, and enable **Bot Settings → Mode Settings → Guest Chat Mode**.
 
-### Зачем нужен `STAGING_CHAT_ID`
+To quote a message in another chat:
 
-В текущей реализации гостевой ответ использует уже загруженный в Telegram
-стикер. Для получения его `file_id` бот:
+1. Select the message and choose Reply.
+2. Enter `@your_bot_username` and send the message.
+3. The bot responds with a sticker containing the selected message.
 
-1. отправляет готовый стикер в закрытый служебный чат;
-2. отвечает этим стикером на гостевой вызов;
-3. удаляет служебное сообщение после успешного ответа.
+Guest Chat Mode does not require adding the bot to the chat. Each invocation
+supports one source message and does not provide access to chat history.
+Classic Inline Mode, which displays a panel of selectable results, is not
+implemented and does not need to be enabled.
 
-Создайте отдельную закрытую группу или канал, добавьте бота и предоставьте
-возможность отправлять стикеры и удалять свои сообщения. Укажите числовой ID
-этого чата в `STAGING_CHAT_ID`. Участники служебного чата могут увидеть цитаты —
-оставляйте там только доверенных участников.
+See the [Telegram Guest Mode documentation](https://core.telegram.org/bots/features#guest-bots).
 
-Для обычных команд стикер отправляется напрямую. Параметр пока обязателен при
-старте приложения. Путь через `uploadStickerFile` без служебного чата **не
-реализован и не проверен**.
+### Staging chat
 
-## Команды и примеры
+`STAGING_CHAT_ID` identifies a private service group or channel used by the
+current guest response implementation. The bot uploads a rendered sticker to
+this chat to obtain a Telegram `file_id`, responds to the guest query using
+that identifier, and deletes the staging message after a successful response.
 
-| Команда / действие | Результат |
+Create a separate private group or channel, add the bot, and allow it to send
+stickers and delete its own messages. Set `STAGING_CHAT_ID` to its numeric ID.
+Members of this chat may see uploaded quotes; restrict membership accordingly.
+
+Ordinary command responses send the sticker directly to the destination chat.
+The staging chat setting is nevertheless required at application startup.
+Delivery through `uploadStickerFile` without a staging chat has not been
+implemented or verified.
+
+## Commands and workflows
+
+| Command or action | Behavior |
 | --- | --- |
-| `/q` ответом | Стикер с одной репликой |
-| `/q 3` ответом | Выбранное сообщение и три следующих из доступного буфера |
-| `/qadd` ответом | Добавить реплику в свою подборку |
-| `/qmake` | Создать стикер и очистить подборку |
-| `/qclear` | Очистить подборку и выключить сбор |
-| Переслать сообщение боту | Создать цитату с доступными данными автора |
-| Отправить боту свой текст | Создать цитату от своего имени |
-| `/collect` в личке | Накапливать сообщения до кнопки «Создать» / «Отмена» |
-| `/status` | Версия кода, имя бота, privacy mode и права в группе |
-| `/start`, `/help` | Справка |
+| Reply with `/q` | Render the selected message. |
+| Reply with `/q 3` | Render the selected message and the next three buffered messages. |
+| Reply with `/qadd` | Add the selected message to a personal selection. |
+| `/qmake` | Render the selection and clear it. |
+| `/qclear` | Clear the selection and disable collection mode. |
+| Forward a message privately | Render it using the available author information. |
+| Send text privately | Render it under the sender's name. |
+| `/collect` in a private chat | Collect messages until Create or Cancel is selected. |
+| `/status` | Display the source build identifier, bot username, privacy mode, and group role. |
+| `/start`, `/help` | Display usage instructions. |
 
-В группе с несколькими ботами адресуйте команду явно: `/q@имябота`.
+In groups with multiple bots, explicitly address commands when necessary:
+`/q@your_bot_username`.
 
-**Последовательная цитата.** Ответьте `/q 2` на первую реплику — получится
-стикер из трёх сообщений. Команды и служебные сообщения в последовательность
-не входят.
+**Consecutive messages:** reply to the first message with `/q 2` to produce a
+three-message quote. Bot commands and service messages are excluded from the
+sequence.
 
-**Ручная подборка.** Ответьте `/qadd` на нужные сообщения, затем отправьте
-`/qmake`. Реплики упорядочиваются по времени; повторное добавление одной реплики
-не создаёт дубль. Подборки отдельные для каждого пользователя в каждом чате.
+**Manual selection:** reply to each required message with `/qadd`, then send
+`/qmake`. Messages are ordered chronologically. Duplicate additions are ignored.
+Selections are isolated by user and chat.
 
-**Несколько пересылок.** В личке отправьте `/collect`, перешлите сообщения
-и нажмите «Создать». Вне режима сбора каждое сообщение обрабатывается отдельно.
+**Multiple forwards:** send `/collect` in a private chat, forward the messages,
+and select Create. Outside collection mode, each private message is processed
+individually.
 
-## Конфигурация
+Bot responses and button labels currently use Russian. Translating this README
+does not change the application interface.
 
-Настройки читаются из окружения и `.env`. Файл `.env` исключён из Git и Docker-образа.
+## Configuration reference
 
-| Переменная | Назначение | Значение по умолчанию |
+Settings are loaded from environment variables and `.env`. The `.env` file is
+excluded from Git and Docker image builds.
+
+| Variable | Description | Default |
 | --- | --- | --- |
-| `BOT_TOKEN` | Токен Telegram-бота | Обязательна |
-| `STAGING_CHAT_ID` | Служебный чат для загрузки гостевых стикеров | Обязательна |
-| `DATABASE_URL` | SQLAlchemy URL | `sqlite+aiosqlite:////data/quoted.db` |
-| `DATA_DIR` | Временные файлы рендера | `/data` |
-| `PROXY_URL` | Прокси для Telegram | Прямое соединение |
-| `RENDER_TIMEOUT` | Максимальное время рендера, секунды | `30` |
-| `MAX_MEDIA_BYTES` | Лимит размера скачиваемого файла | `10485760` |
-| `LOG_LEVEL` | Уровень логирования | `INFO` |
+| `BOT_TOKEN` | Telegram bot token. | Required |
+| `STAGING_CHAT_ID` | Private service chat for guest sticker uploads. | Required |
+| `DATABASE_URL` | Asynchronous SQLAlchemy connection URL. | `sqlite+aiosqlite:////data/quoted.db` |
+| `DATA_DIR` | Temporary rendering file directory. | `/data` |
+| `PROXY_URL` | Proxy for Telegram connections. | Direct connection |
+| `RENDER_TIMEOUT` | Rendering deadline, in seconds. | `30` |
+| `MAX_MEDIA_BYTES` | Maximum downloaded media file size, in bytes. | `10485760` |
+| `LOG_LEVEL` | Logging level. | `INFO` |
 
-SQLite для запуска через uv:
+### Database
+
+SQLite for a local Python process:
 
 ```dotenv
 DATABASE_URL=sqlite+aiosqlite:///./data/quoted.db
@@ -163,46 +196,32 @@ PostgreSQL:
 DATABASE_URL=postgresql+asyncpg://quoted:password@localhost:5432/quoted
 ```
 
-В базовом Compose SQLite URL задан явно в `environment`. Для PostgreSQL
-измените его там или используйте собственный Compose override. Сам PostgreSQL
-в базовый Compose не включён.
+The supplied Compose file explicitly sets a SQLite URL in the service's
+`environment` section. To use PostgreSQL, change that value or provide a
+Compose override. A PostgreSQL server is not included in the default stack.
 
-### Прокси
+### Proxy
 
-Поддерживаются HTTP CONNECT, SOCKS4 и SOCKS5 с необязательной авторизацией:
+HTTP CONNECT, SOCKS4, and SOCKS5 are supported, including authentication:
 
 ```dotenv
 PROXY_URL=http://127.0.0.1:3128
-# Или:
+# Alternatively:
 PROXY_URL=socks5://user:password@127.0.0.1:1080
 ```
 
-Спецсимволы в логине и пароле кодируйте как URL: например, `@` → `%40`.
-Прокси используется для Telegram API, long polling, загрузки и скачивания
-файлов. Соединения с PostgreSQL через него не направляются.
+Percent-encode special characters in credentials, for example `@` as `%40`.
+The proxy applies to Telegram API calls, polling, uploads, and downloads.
+PostgreSQL connections do not use it.
 
-В Compose у сервиса `bot` включён `network_mode: host`: на Linux `localhost`
-означает хост, и прокси может слушать только loopback. Для Docker Desktop нужна
-включённая поддержка host networking. В Kubernetes адрес `127.0.0.1` относится
-к Pod; настройки сети Compose туда не переносятся.
+The Compose `bot` service uses `network_mode: host`. On Linux, `localhost`
+therefore refers to the host and can reach a proxy bound to loopback. Docker
+Desktop requires host networking support to be enabled. In Kubernetes,
+`127.0.0.1` refers to the Pod; Compose networking settings do not carry over.
 
-## Запуск без Docker
+## Testing
 
-Нужны Python 3.12+ и [uv](https://docs.astral.sh/uv/). Шрифты Noto включены в пакет.
-
-```bash
-uv sync --frozen
-cp .env.example .env
-# Заполните .env; оставьте локальные DATABASE_URL и DATA_DIR из примера.
-mkdir -p data
-uv run python -m quoted_bot
-```
-
-Если `.env` уже настроен, повторно копировать пример не нужно.
-
-## Проверки
-
-Локально:
+Run checks in the local environment:
 
 ```bash
 uv run pytest -q
@@ -210,23 +229,24 @@ uv run ruff check src tests
 uv run ruff format --check src tests
 ```
 
-В отдельном контейнере, без токена и реального Telegram:
+Run tests in a dedicated container:
 
 ```bash
 docker compose --profile test run --build --rm --no-deps tests
 ```
 
-Тестовый сервис использует временные SQLite-файлы и подменённый Telegram
-transport. Во время выполнения тестов сеть отключена; том данных бота не
-подключается. При сборке образа нужен доступ к реестрам и пакетным репозиториям.
+The test service does not require a bot token or a running bot. It uses
+temporary SQLite databases and a mocked Telegram transport, runs without
+network access, and does not mount the bot's data volume. Building the image
+still requires access to container and package registries.
 
-Проверяются сценарии цитирования, external replies, rich-текст, подборки,
-дедупликация заданий, восстановление очереди, прокси и ограничения WebP.
-Модульные проверки не заменяют проверку с реальным Telegram и PostgreSQL.
+Tests cover quoting workflows, external replies, rich text, selections, job
+deduplication and recovery, proxy configuration, and WebP output constraints.
+They do not replace integration testing against Telegram and PostgreSQL.
 
-## Kubernetes
+## Kubernetes deployment
 
-В репозитории есть [Helm chart](deploy/helm/quoted-bot/README.md):
+A [Helm chart](deploy/helm/quoted-bot/README.md) is included:
 
 ```bash
 helm lint deploy/helm/quoted-bot --set stagingChatId=-1001234567890
@@ -237,67 +257,82 @@ helm upgrade --install quoted ./deploy/helm/quoted-bot \
   --set-string stagingChatId=-1001234567890
 ```
 
-Перед установкой соберите и опубликуйте образ, создайте Secret с токеном и URL
-БД. Chart использует один экземпляр, внешние Secret, опциональный PVC для SQLite
-и опциональный Secret с URL прокси. Сервис и ingress не нужны: бот получает
-обновления через исходящее long-polling соединение.
+Before installation, build and publish the image and create the referenced
+Secret containing the token and database URL. The chart supports external
+Secrets, an optional SQLite PVC, and an optional Secret for the proxy URL.
+It enforces a single application replica. No Service or ingress is required
+because the bot receives updates through outbound long polling.
 
-## Архитектура
+## Architecture
 
 ```text
 src/quoted_bot/
-├── domain/          # Модели цитаты и интерфейсы; без Telegram и SQLAlchemy
-├── application/     # Сценарии: подборки, последовательности, задания
-├── presentation/    # aiogram, команды, нормализация сообщений и rich-текста
-├── infrastructure/  # SQLAlchemy, очередь, Pillow, Telegram HTTP-сессия
-├── assets/fonts/    # Шрифты Noto и лицензия OFL
-├── config.py        # Настройки окружения
-├── diagnostics.py   # Отпечаток запущенных исходников
-└── __main__.py      # Сборка зависимостей и жизненный цикл
+├── domain/          # Quote models and interfaces; no Telegram or ORM dependencies
+├── application/     # Selection, sequence, and job submission use cases
+├── presentation/    # aiogram handlers and message/rich-text normalization
+├── infrastructure/  # SQLAlchemy, job processing, Pillow, and Telegram HTTP session
+├── assets/fonts/    # Bundled Noto fonts and OFL notices
+├── config.py        # Environment settings
+├── diagnostics.py   # Source build identifier
+└── __main__.py      # Dependency composition and application lifecycle
 ```
 
-Входы через команды, пересылки и Guest Mode приводятся к общей модели цитаты.
-Рендерер получает эту модель и локальные медиа, не обращаясь к Telegram API.
-Pillow работает в отдельном процессе с таймаутом.
+Commands, forwarded messages, and guest requests are converted into a common
+quote model. The renderer receives this model and local media files without
+calling Telegram APIs. Pillow runs in a separate process with a rendering
+deadline.
 
-**Хранение.** SQLAlchemy async поддерживает SQLite/aiosqlite и PostgreSQL/asyncpg.
-В той же БД находятся сообщения, подборки и очередь. Redis и RabbitMQ не нужны.
-Схема первого релиза создаётся через `create_all`; обновление существующей схемы
-пока не автоматизировано. Для изменения схемы потребуются версионированные миграции.
+### Persistence
 
-**Очередь.** `pending → rendering → delivering → done`. Ошибка подготовки
-становится `failed`. Прерванный рендер возвращается в очередь после перезапуска.
-Прерванная или неоднозначная доставка становится `uncertain` и не повторяется
-автоматически, чтобы не дублировать стикер. Повторить можно новой командой.
+Asynchronous SQLAlchemy supports SQLite through aiosqlite and PostgreSQL
+through asyncpg. Messages, selections, and jobs use the same database. Redis
+and RabbitMQ are not required.
 
-## Ограничения MVP
+The initial schema is created with `create_all`. Existing schema upgrades are
+not automated; subsequent schema changes require versioned migrations.
 
-- До 10 сообщений и один статический WebP на цитату. Анимации, коллекций,
-  управления наборами, редактора оформления и классического inline-режима нет.
-- `/q N` использует только полученные сообщения: буфер до 1000 реплик на чат
-  за 24 часа. Пропуски обновлений или ограниченные права могут сделать его неполным.
-- Внешняя цитата из другого чата поддерживает одну реплику, но не `/q N`.
-- Подборки истекают через час бездействия. Завершённые задания и буфер сообщений
-  очищаются по сроку хранения; временные медиа удаляются после обработки.
-- Telegram не сообщает боту обо всех удалениях. Правки учитываются, если бот
-  получил соответствующее обновление.
-- При скрытом авторе пересылки используются только доступные данные.
-- Custom emoji используют текстовую альтернативу. Составные emoji, сложные
-  письменности и сложные rich-блоки требуют дальнейшей визуальной доводки.
-- Фото и статические стикеры отображаются изображениями, остальные вложения —
-  карточками. Недоступные медиа заменяются карточкой или аватаром-заглушкой.
-- Запуск рассчитан на один экземпляр приложения. Несколько poller-процессов
-  с одним токеном не поддерживаются.
+### Job processing
 
-## Если что-то не работает
+Jobs normally transition through `pending → rendering → delivering → done`.
+Preparation and rendering failures produce `failed` jobs. Interrupted rendering
+jobs return to the queue after a restart.
 
-**`/q` цитирует команды, но не обычный текст.** Проверьте `/status`: права бота,
-Group Privacy и версию сборки. Обновите код — ранние версии не поддерживали
-поле `rich_message`. После изменения privacy mode заново добавьте бота в группу.
+Interrupted or ambiguous delivery produces an `uncertain` job. Such jobs are
+not retried automatically because Telegram delivery is not idempotent. A user
+can submit a new command to retry the operation.
 
-**После обновления поведение осталось старым.** Пересоберите образ и пересоздайте
-контейнер; проверьте, что на другом сервере или в терминале нет второго бота
-с тем же токеном:
+## Operational limits
+
+- Quotes are limited to 10 messages and one static WebP sticker. Animation,
+  sticker collection management, an appearance editor, and classic inline
+  results are outside the current scope.
+- `/q N` uses received messages only: up to 1,000 buffered messages per chat,
+  retained for 24 hours. Downtime or restricted permissions may leave gaps.
+- External replies support individual quotes, but not `/q N` sequences.
+- Selections expire after one hour of inactivity. Completed jobs and buffered
+  messages are removed according to their retention periods. Temporary media
+  is removed after processing.
+- Telegram does not report every message deletion. Edits are reflected when
+  the bot receives the corresponding update.
+- Forwarded messages with hidden authors use only the available attribution.
+- Custom emoji use their text alternatives. Composite emoji, complex scripts,
+  and advanced rich-message blocks require further rendering work.
+- Photos and static stickers are rendered as images. Other attachments use
+  cards. Unavailable media falls back to a card or avatar placeholder.
+- Multiple polling processes using the same token are not supported.
+
+## Troubleshooting
+
+### Commands can be quoted, but ordinary messages cannot
+
+Run `/status` to check the build identifier, privacy mode, and group role.
+Update older builds that do not support `rich_message`. After changing privacy
+mode, remove the bot from the group and add it again.
+
+### A deployment still exhibits previous behavior
+
+Rebuild the image and recreate the container. Confirm that no other machine
+or local process is polling with the same token:
 
 ```bash
 docker compose build --no-cache bot
@@ -305,44 +340,51 @@ docker compose up -d --force-recreate bot
 docker compose logs --tail=100 bot
 ```
 
-При старте логируется `Starting quoted-bot build=...`; тот же отпечаток показывает
-`/status`. Отпечаток локальных исходников:
+Startup logs include `Starting quoted-bot build=...`. The same identifier is
+returned by `/status`. To identify the local source tree:
 
 ```bash
 uv run python -c 'from quoted_bot.diagnostics import build_id; print(build_id())'
 ```
 
-**Вызов через `@имябота` не отвечает.** Проверьте именно Guest Chat Mode в
-Mini App BotFather, отправку упоминания ответом на сообщение и доступность
-служебного чата. Inline Mode с выпадающей панелью — другой механизм.
+### Guest mentions receive no response
 
-**Нужна диагностика входящего сообщения.** После неудачного `/q` найдите запись:
+Check Guest Chat Mode in the BotFather Mini App, send the mention as a reply
+to the source message, and verify access to the staging chat. Enabling classic
+Inline Mode does not enable this workflow.
+
+### Inspecting reply metadata
+
+After a failed `/q`, inspect the diagnostic entry:
 
 ```bash
 docker compose logs --tail=100 bot | grep 'Quote request'
 ```
 
-Эта запись содержит признаки полей (`reply_rich`, `reply_fields` и другие),
-но не текст переписки. Не публикуйте `.env`, токены и URL прокси с паролями.
+This entry records field presence, including `reply_rich` and `reply_fields`,
+without recording message text. Do not publish `.env`, bot tokens, or proxy
+URLs containing credentials.
 
-## Происхождение и лицензия
+## Attribution and license
 
-Идея и визуальная основа — [ryotairi/quoted](https://github.com/ryotairi/quoted),
-QuoteD Matrix, авторы rustyraven и Vadim-Khristenko. Здесь реализован Python-рендер
-на Pillow и Telegram-интерфейс; идентичность изображениям Matrix-версии не заявляется.
+The project is based on the concept and visual approach of
+[ryotairi/quoted](https://github.com/ryotairi/quoted), QuoteD Matrix, by
+rustyraven and Vadim-Khristenko. This implementation provides a Python/Pillow
+renderer and Telegram integration; pixel-identical output is not claimed.
 
-Проект использует **AGPL-3.0-only** — см. [LICENSE](LICENSE). Это консервативный
-выбор совместимости с исходным quoted, поскольку работа начиналась как перенос
-его рендера. Перевод производного кода на другой язык сам по себе не отменяет
-исходные условия. Для полностью независимой реализации другой выбор возможен
-после проверки заимствований; текущая лицензия этим не меняется.
+The project is licensed under **AGPL-3.0-only**; see [LICENSE](LICENSE). This
+was selected conservatively for compatibility with the upstream project
+because the work began as a renderer port. Translating derivative code into
+another language does not remove the original license obligations. A different
+license for an independent implementation would require reviewing the actual
+reuse; the current license remains unchanged.
 
-AGPL допускает коммерческое использование. Для изменённой версии, доступной по
-сети, раздел 13 требует предложить пользователям соответствующий исходный код.
-При распространении действуют и остальные условия лицензии. Токены, пароли и
-переписка пользователей не являются исходным кодом программы.
+AGPL permits commercial use. Section 13 requires modified versions offered to
+users over a network to provide an opportunity to obtain the corresponding
+source. Distribution is also subject to the other license conditions. Bot
+tokens, passwords, and user conversations are not application source code.
 
-- [Текст GNU AGPL v3](https://www.gnu.org/licenses/agpl-3.0.html)
-- [Рекомендации GNU по применению лицензий](https://www.gnu.org/licenses/gpl-howto.en.html)
-- Шрифты Noto имеют отдельную **SIL OFL 1.1**:
-  [лицензия и уведомления](src/quoted_bot/assets/fonts/OFL.txt).
+- [GNU AGPL v3](https://www.gnu.org/licenses/agpl-3.0.html)
+- [GNU guidance on applying licenses](https://www.gnu.org/licenses/gpl-howto.en.html)
+- Bundled Noto fonts retain their separate **SIL OFL 1.1** license:
+  [license and notices](src/quoted_bot/assets/fonts/OFL.txt).
