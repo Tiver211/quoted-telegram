@@ -1,0 +1,33 @@
+[project]
+name = "quoted-bot"
+version = "0.1.0"
+description = "Telegram quote stickers with command and guest interfaces"
+requires-python = ">=3.12"
+license = "AGPL-3.0-only"
+dependencies = [
+  "aiogram[proxy]>=3.31,<4",
+  "sqlalchemy[asyncio]>=2.0.36,<3",
+  "asyncpg>=0.30,<1",
+  "aiosqlite>=0.20,<1",
+  "pillow>=11,<13",
+  "pydantic-settings>=2.7,<3",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quoted_bot"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100

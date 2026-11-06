@@ -1,0 +1,55 @@
+replicaCount: 1
+stagingChatId: ""
+renderTimeout: 30
+# Optional existing Secret with the full proxy URL, including credentials.
+proxy:
+  secretName: ""
+  secretKey: proxy-url
+image:
+  repository: ghcr.io/example/quoted-bot
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+secrets:
+  botToken:
+    name: quoted-bot
+    key: bot-token
+  databaseUrl:
+    name: quoted-bot
+    key: database-url
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# Mount a PVC at /data when DATABASE_URL uses a SQLite file there. For PostgreSQL,
+# use an external asyncpg database and leave persistence disabled.
+persistence:
+  enabled: false
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  storageClassName: ""
+  mountPath: /data

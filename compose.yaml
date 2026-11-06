@@ -1,0 +1,37 @@
+name: quoted-bot
+
+services:
+  bot:
+    build:
+      context: .
+      target: runtime
+    init: true
+    # Linux: localhost proxies on the host are reachable as 127.0.0.1.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      # Required by the bot on startup; tests do not use these values.
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      STAGING_CHAT_ID: ${STAGING_CHAT_ID:-}
+      # Container paths intentionally override the host-oriented .env.example.
+      DATABASE_URL: sqlite+aiosqlite:////data/quoted.db
+      DATA_DIR: /data
+      PROXY_URL: ${PROXY_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - bot-data:/data
+    stop_grace_period: 40s
+
+  tests:
+    profiles: [test]
+    build:
+      context: .
+      target: test
+    init: true
+    restart: "no"
+    # Tests use temporary SQLite files and a mocked Telegram transport.
+    # No bot token, service volume or real Telegram connection is needed.
+    network_mode: none
+
+volumes:
+  bot-data:
